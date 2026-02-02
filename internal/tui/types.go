@@ -22,6 +22,7 @@ type typesLoadedMsg struct {
 type TypesModel struct {
 	store  *store.Store
 	table  table.Model
+	loaded bool
 	width  int
 	height int
 }
@@ -71,13 +72,16 @@ func (m TypesModel) Update(msg tea.Msg) (TypesModel, tea.Cmd) {
 			})
 		}
 		m.table = m.table.WithRows(rows)
+		m.loaded = true
 		return m, nil
 
 	case tea.KeyMsg:
-		switch msg.String() {
-		case "enter":
+		if msg.String() == "enter" && m.loaded {
 			selected := m.table.HighlightedRow()
 			typeName, _ := selected.Data[colType].(string)
+			if typeName == "" {
+				return m, nil
+			}
 			countStr, _ := selected.Data[colCount].(string)
 			count, _ := strconv.Atoi(countStr)
 			return m, func() tea.Msg {

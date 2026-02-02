@@ -41,9 +41,18 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "ctrl+c", "q":
-			if a.current == screenTypes {
+		case "ctrl+c":
+			return a, tea.Quit
+		case "q":
+			switch a.current {
+			case screenTypes:
 				return a, tea.Quit
+			case screenElements:
+				a.current = screenTypes
+				return a, a.types.Init()
+			case screenDetail:
+				a.current = screenElements
+				return a, nil
 			}
 		case "esc":
 			switch a.current {

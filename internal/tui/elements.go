@@ -15,6 +15,7 @@ const (
 	colHjid    = "hjid"
 	colSummary = "summary"
 	pageSize   = 100
+	maxSummary = 120
 )
 
 type elementsLoadedMsg struct {
@@ -27,6 +28,7 @@ type ElementsModel struct {
 	elementType string
 	totalCount  int
 	offset      int
+	loaded      bool
 	width       int
 	height      int
 }
@@ -50,6 +52,7 @@ func (m ElementsModel) ForType(elementType string, count int) ElementsModel {
 	m.elementType = elementType
 	m.totalCount = count
 	m.offset = 0
+	m.loaded = false
 	return m
 }
 
@@ -80,17 +83,22 @@ func (m ElementsModel) loadPage() tea.Cmd {
 func summarise(jsonData string) string {
 	var obj map[string]interface{}
 	if err := json.Unmarshal([]byte(jsonData), &obj); err != nil {
-		return jsonData[:min(80, len(jsonData))]
+		if len(jsonData) > maxSummary {
+			return jsonData[:maxSummary]
+		}
+		return jsonData
 	}
 
-	// Try common summary fields
 	for _, key := range []string{"sid", "description", "code", "descriptionPeriod.sid"} {
 		if v, ok := obj[key]; ok {
-			return fmt.Sprintf("%s=%v", key, v)
+			s := fmt.Sprintf("%s=%v", key, v)
+			if len(s) > maxSummary {
+				return s[:maxSummary]
+			}
+			return s
 		}
 	}
 
-	// Fall back to first few keys
 	summary := ""
 	count := 0
 	for k, v := range obj {
@@ -100,11 +108,18 @@ func summarise(jsonData string) string {
 		if count > 0 {
 			summary += ", "
 		}
-		summary += fmt.Sprintf("%s=%v", k, v)
+		val := fmt.Sprintf("%v", v)
+		if len(val) > 40 {
+			val = val[:40] + "..."
+		}
+		summary += fmt.Sprintf("%s=%s", k, val)
 		count++
-		if count >= 3 {
+		if count >= 3 || len(summary) > maxSummary {
 			break
 		}
+	}
+	if len(summary) > maxSummary {
+		summary = summary[:maxSummary]
 	}
 	return summary
 }
@@ -123,13 +138,20 @@ func (m ElementsModel) Update(msg tea.Msg) (ElementsModel, tea.Cmd) {
 			})
 		}
 		m.table = m.table.WithRows(rows)
+		m.loaded = true
 		return m, nil
 
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "enter":
+			if !m.loaded {
+				return m, nil
+			}
 			selected := m.table.HighlightedRow()
 			hjid, _ := selected.Data[colHjid].(string)
+			if hjid == "" {
+				return m, nil
+			}
 			data, _ := selected.Data["data"].(string)
 			return m, func() tea.Msg {
 				return NavigateToDetailMsg{Hjid: hjid, Data: data}
@@ -137,11 +159,13 @@ func (m ElementsModel) Update(msg tea.Msg) (ElementsModel, tea.Cmd) {
 		case "n":
 			if m.offset+pageSize < m.totalCount {
 				m.offset += pageSize
+				m.loaded = false
 				return m, m.loadPage()
 			}
 		case "p":
 			if m.offset >= pageSize {
 				m.offset -= pageSize
+				m.loaded = false
 				return m, m.loadPage()
 			}
 		}
@@ -156,6 +180,6 @@ func (m ElementsModel) View() string {
 		Render(fmt.Sprintf("%s (%s total)", m.elementType, strconv.Itoa(m.totalCount)))
 	page := fmt.Sprintf("Page %d/%d", m.offset/pageSize+1, (m.totalCount+pageSize-1)/pageSize)
 	help := lipgloss.NewStyle().Foreground(lipgloss.Color("241")).
-		Render("↑/↓ navigate • enter detail • n/p next/prev page • / filter • esc back")
+		Render("↑/↓ navigate • enter detail • n/p next/prev page • / filter • q/esc back")
 	return fmt.Sprintf("\n  %s  %s\n\n%s\n\n  %s", title, page, m.table.View(), help)
 }
