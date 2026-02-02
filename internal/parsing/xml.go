@@ -1,25 +1,18 @@
 package parsing
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
-	"log"
-	"os"
-	"path/filepath"
 	"regexp"
 
 	"github.com/orisano/gosax"
-	"go.mongodb.org/mongo-driver/bson"
+	"github.com/willfish/te/internal/store"
 )
 
 type Node map[string]interface{}
-type Primaries map[string]int
 
-var primaries = Primaries{}
-
-func Parse(f io.Reader, filename string) {
-	base := "$HOME/.cache/te/" + filepath.Base(filename)
-	filename = os.ExpandEnv(filename)
+func Parse(f io.Reader, s *store.Store) error {
 	targetDepth := 4
 	inTarget := false
 	extraContent := regexp.MustCompile(`^\n\s+`)
@@ -32,7 +25,7 @@ func Parse(f io.Reader, filename string) {
 	for {
 		e, err := r.Event()
 		if err != nil {
-			log.Fatal(err)
+			return fmt.Errorf("reading XML event: %w", err)
 		}
 		if e.Type() == gosax.EventEOF {
 			break
@@ -73,10 +66,18 @@ func Parse(f io.Reader, filename string) {
 
 			if depth == targetDepth {
 				n := stack[len(stack)-1]
-				primaries[key]++
 				targetHandler(n)
-				path := []string{base, key}
-				writeNode(n, path)
+
+				hjid := fmt.Sprintf("%v", n["hjid"])
+				jsonData, err := json.Marshal(n)
+				if err != nil {
+					return fmt.Errorf("marshalling element %s: %w", hjid, err)
+				}
+
+				if err := s.InsertElement(hjid, key, string(jsonData)); err != nil {
+					return fmt.Errorf("inserting element %s: %w", hjid, err)
+				}
+
 				stack = stack[:len(stack)-1]
 				inTarget = false
 			}
@@ -103,31 +104,11 @@ func Parse(f io.Reader, filename string) {
 		}
 	}
 
-	primaryFile, err := os.Create(filepath.Join(base, "primaries.bson"))
-	defer primaryFile.Close()
-	if err != nil {
-		log.Fatalf("Error creating file: %v - do you have write permissions", err)
+	if err := s.Flush(); err != nil {
+		return fmt.Errorf("flushing store: %w", err)
 	}
 
-	if data, err := bson.Marshal(primaries); err != nil {
-		log.Fatalf("Error marshalling primaries: %v", err)
-	} else {
-		_, err = primaryFile.Write(data)
-		if err != nil {
-			log.Fatalf("Error writing to file: %v", err)
-		}
-	}
-
-}
-
-func encodeNode(n Node) ([]byte, error) {
-	return bson.Marshal(n)
-}
-
-func decodeNode(data []byte) (Node, error) {
-	var n Node
-	err := bson.Unmarshal(data, &n)
-	return n, err
+	return nil
 }
 
 func deepFlatten(n Node, prefix string) Node {
@@ -182,32 +163,4 @@ func targetHandler(n Node) Node {
 	}
 
 	return n
-}
-
-func writeNode(n Node, path []string) {
-	hjid := n["hjid"]
-	newFile := filepath.Join(path...)
-	newFile = os.ExpandEnv(newFile)
-
-	err := os.MkdirAll(newFile, os.ModePerm)
-	if err != nil {
-		log.Fatalf("Error creating path: %v", err)
-	}
-	path = append(path, fmt.Sprintf("%v", hjid)+".bson")
-
-	filePath := filepath.Join(path...)
-	filePath = os.ExpandEnv(filePath)
-
-	bsonFile, err := os.Create(filePath)
-	defer bsonFile.Close()
-	if err != nil {
-		log.Fatalf("Error creating file: %v - do you have write permissions", err)
-	}
-
-	data, err := encodeNode(n)
-	if err != nil {
-		log.Printf("Error marshalling node: %v", err)
-		return
-	}
-	_, err = bsonFile.WriteString(string(data))
 }

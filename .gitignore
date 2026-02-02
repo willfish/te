@@ -24,4 +24,12 @@ go.work.sum
 .direnv
 .envrc
 
+# Built binary
 /te
+
+# Data files
+*.xml
+*.zip
+*.gzip
+*.db
+results
